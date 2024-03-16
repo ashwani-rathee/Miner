@@ -1,4 +1,4 @@
-using GLMakie.Makie: 
+using GLMakie.Makie:
     AbstractCamera, root, deselect_all_cameras!, perspectiveprojection,
     set_proj_view!, screen_relative
 using Base: RefValue
@@ -17,7 +17,7 @@ struct PlayerController <: AbstractCamera
     eyeposition::Observable{Vec3f}
     lookat::Observable{Vec3f}
     upvector::Observable{Vec3f}
-	
+
 	# perspective projection matrix
     fov::Observable{Float32}
     near::Observable{Float32}
@@ -46,7 +46,7 @@ function PlayerController(scene::Scene; kwargs...)
     )
 
     cam = PlayerController(
-        settings, controls, 
+        settings, controls,
 
         # Internals - controls
         Observable(-1.0),
@@ -64,55 +64,13 @@ function PlayerController(scene::Scene; kwargs...)
     )
 
     disconnect!(camera(scene))
-
-    # Keyboard controls
-    # ticks every so often to get consistent position updates.
-    on(cam.pulser) do prev_time
-        current_time = time()
-        active = on_pulse(scene, cam, current_time - prev_time)
-        @async if active && cam.selected[]
-            sleep(settings.update_rate[])
-            cam.pulser[] = current_time
-        else
-            cam.pulser.val = -1.0
-        end
-    end
-
-    keynames = (:left_key, :right_key, :forward_key, :backward_key)
-    
-    # Start ticking if relevant keys are pressed
-    on(camera(scene), events(scene).keyboardbutton) do event
-        if event.action in (Keyboard.press, Keyboard.repeat) && cam.pulser[] == -1.0 &&
-            cam.selected[] && any(key -> ispressed(scene, controls[key][]), keynames)
-
-            cam.pulser[] = time()
-            return Consume(true)
-        end
-        return Consume(false)
-    end
-
     # de/select plot on click outside/inside
     # also deselect other cameras
-    deselect_all_cameras!(root(scene))
-    on(camera(scene), events(scene).mousebutton, priority = 100) do event
-        if event.action == Mouse.press
-            cam.selected[] = is_mouseinside(scene)
-        end
-        return Consume(false)
-    end
-
     # Mouse controls
     add_rotation!(scene, cam)
 
     # add camera controls to scene
     cameracontrols!(scene, cam)
-
-    # Trigger updates on scene resize and settings change
-    on(camera(scene), scene.px_area, cam.near, cam.far, cam.fov) do _, _, _, _
-        update_cam!(scene, cam)
-    end
-
-    update_cam!(scene, cam)
     cam
 end
 
@@ -121,9 +79,7 @@ end
 ### Interactivity init
 ################################################################################
 
-
-
-function on_pulse(scene, cam::PlayerController, timestep)
+function move_cam!(scene, cam::PlayerController, timestep)
     @extractvalue cam.controls (right_key, left_key, backward_key, forward_key)
     @extractvalue cam.settings (keyboard_translationspeed, )
 
@@ -139,19 +95,11 @@ function on_pulse(scene, cam::PlayerController, timestep)
         viewnorm = norm(cam.lookat[] - cam.eyeposition[])
         xynorm = 2 * viewnorm * tand(0.5 * cam.fov[])
         translation = keyboard_translationspeed * timestep * Vec3f(
-            xynorm * (right - left), 
-            0.0, 
+            xynorm * (right - left),
+            0.0,
             viewnorm * (backward - forward)
         )
         _translate_cam!(scene, cam, translation)
-    end
-
-    # if any are active, update matrices, else stop clock
-    if translating
-        update_cam!(scene, cam)
-        return true
-    else
-        return false
     end
 end
 
@@ -161,26 +109,16 @@ function add_rotation!(scene, cam::PlayerController)
     @extract cam.settings (mouse_rotationspeed, )
 
     last_mousepos = RefValue(Vec2f(0, 0))
-    dragging = RefValue(false)
     e = events(scene)
-    
-    on(camera(scene), e.keyboardbutton) do event
-        if(event.action == Makie.Keyboard.press && event.key == Keyboard.escape)
-            a = dragging[]
-            dragging[] = !a
-        end
-    end
+
     # in drag
     on(camera(scene), e.mouseposition) do mp
-        
-        if dragging[]
-            mousepos = screen_relative(scene, mp)
-            rot_scaling = mouse_rotationspeed[] * (e.window_dpi[] * 0.005)
-            mp = (last_mousepos[] .- mousepos) * 0.01f0 * rot_scaling
-            last_mousepos[] = mousepos
-            rotate_cam!(scene, cam, Vec3f(-mp[2], mp[1], 0f0), true)
-            return Consume(true)
-        end
+        mousepos = screen_relative(scene, mp)
+        rot_scaling = mouse_rotationspeed[] * (e.window_dpi[] * 0.001)
+        mp = (last_mousepos[] .- mousepos) * 0.01f0 * rot_scaling
+        last_mousepos[] = mousepos
+        rotate_cam!(scene, cam, Vec3f(-mp[2], mp[1], 0f0), true)
+        return Consume(true)
         return Consume(false)
     end
 end
@@ -194,14 +132,12 @@ end
 # Simplified methods
 function translate_cam!(scene, cam::PlayerController, t::VecTypes)
     _translate_cam!(scene, cam, t)
-    update_cam!(scene, cam)
     nothing
 end
 
 
 function rotate_cam!(scene, cam::PlayerController, angles::VecTypes, from_mouse=false)
     _rotate_cam!(scene, cam, angles, from_mouse)
-    update_cam!(scene, cam)
     nothing
 end
 
@@ -269,16 +205,6 @@ function update_cam!(scene::Scene, cam::PlayerController)
 
     scene.camera.eyeposition[] = cam.eyeposition[]
 end
-
-
-# Update camera position via bbox
-function update_cam!(scene::Scene, cam::PlayerController, area3d::Rect)
-    # TODO
-    # Maybe center on player here?
-
-    return
-end
-
 # Update camera position via camera Position & Orientation
 function update_cam!(scene::Scene, camera::PlayerController, eyeposition::VecTypes, lookat::VecTypes, up::VecTypes = camera.upvector[])
     camera.lookat[]      = Vec3f(lookat)
@@ -293,10 +219,10 @@ update_cam!(scene::Scene, args::Real...) = update_cam!(scene, cameracontrols(sce
 """
     update_cam!(scene, cam::PlayerController, ϕ, θ[, radius])
 Set the camera position based on two angles `0 ≤ ϕ ≤ 2π` and `-pi/2 ≤ θ ≤ pi/2`
-and an optional radius around the current `cam.lookat[]`. 
+and an optional radius around the current `cam.lookat[]`.
 """
 function update_cam!(
-        scene::Scene, camera::PlayerController, phi::Real, theta::Real, 
+        scene::Scene, camera::PlayerController, phi::Real, theta::Real,
         radius::Real = norm(camera.eyeposition[] - camera.lookat[]),
         center = camera.lookat[]
     )

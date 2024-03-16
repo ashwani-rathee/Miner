@@ -3,13 +3,13 @@ module Miner
 const ASSET_DIR = realpath(joinpath(@__DIR__, "../assets"))
 
 using GLMakie
+using GLMakie.GLFW
 using CoherentNoise
 using GeometryBasics
 using Colors
 using FixedPointNumbers
 using FileIO
 
-GLMakie.activate!(float=true)
 
 include("player_controller.jl")
 include("world_manager.jl")
@@ -19,12 +19,22 @@ export start_game
 
 function start_game()
     @info "Starting Game!"
-
-    scene = Scene(; backgroundcolor=:grey)
+    Makie.set_theme!(; ssao=true)
+    scene = Scene(; backgroundcolor=:lightblue)
     pc = PlayerController(scene)
 
     subscene = Scene(scene)
     campixel!(subscene)
+    gap = 3 * (1 / size(scene)[1])
+    line = 10 * (1 / size(scene)[1])
+    mid = Point2f(0.5, 0.5)
+    crosshair = Point2f[
+        mid .+ Point2f(gap, 0), mid .+ Point2f(gap + line, 0),
+        mid .- Point2f(gap, 0), mid .- Point2f(gap + line, 0),
+        mid .+ Point2f(0, gap), mid .+ Point2f(0, gap + line),
+        mid .- Point2f(0, gap), mid .- Point2f(0, gap + line),
+    ]
+    linesegments!(subscene, crosshair; color=(:red, 0.5), inspectable=false, linewidth=2, space=:relative)
 
     world_changelocs = []
     world_changeblocks = []
@@ -70,15 +80,11 @@ function start_game()
         end
     end
 
-
-
     # for block adding and breaking
     on(events(scene).mousebutton) do button
         if (button.button == Makie.Mouse.left && button.action == Makie.Mouse.press)
-            p, idx = pick(scene)
-            if (p === nothing)
-                return
-            end
+            p, idx = pick(scene, round.(Int, size(scene) ./ 2))
+            isnothing(p) && return
 
             locMouse[] = string("Mouse click on object at: ", round.(Int, p.positions[][idx]))
             loc = p.positions[][idx]
@@ -98,7 +104,7 @@ function start_game()
             end
 
             a = currBlock[]
-            if (buildable !== nothing)
+            if (!isnothing(buildable))
                 push!(positionsAll[Int(a)][], buildable)
                 push!(world_changelocs, buildable)
                 push!(world_changeblocks, a)
@@ -106,9 +112,10 @@ function start_game()
 
             notify(positionsAll[Int(a)])
         elseif (button.button == Makie.Mouse.right && button.action == Makie.Mouse.press)
-            p, idx = pick(scene)
-            locMouse[] = string("Mouse click on object at: ", round.(Int, p.positions[][idx]))
+            p, idx = pick(scene, round.(Int, size(scene) ./ 2))
+            isnothing(p) && return
 
+            locMouse[] = string("Mouse click on object at: ", round.(Int, p.positions[][idx]))
             loc = p.positions[][idx]
             if (p.positions[][idx] in world_changelocs)
                 idx1 = findfirst(x -> x == p.positions[][idx], world_changelocs)
@@ -120,15 +127,16 @@ function start_game()
         end
     end
 
-    lastTime = time()
-    lastTime1 = time()
+    screen = GLMakie.Screen(scene; focus_on_show=true, float=true, ssao=true, start_renderloop=false)
+    glscreen = screen.glscreen
+
     on(events(scene).keyboardbutton) do button
-        framerate1 = 1 / (time() - lastTime1)
-        lastTime1 = time()
-        framerate[] = string(round(Int, framerate1), " fps")
-
-        camloc[] = string("Current Loc:", round.(Int, cameracontrols(scene).eyeposition[]))
-
+        if button.key == Makie.Keyboard.escape
+            GLFW.make_windowed!(glscreen)
+            GLFW.SetInputMode(glscreen, GLFW.CURSOR, GLFW.CURSOR_NORMAL)
+            GLFW.SetWindowAttrib(glscreen, GLFW.DECORATED, true)
+            return
+        end
         if (button.key == Makie.Keyboard._1 && button.action == Makie.Keyboard.press)
             if (Int(currBlock[]) > 2)
                 currBlock[] = BlockType(Int(currBlock[]) - 1)
@@ -141,7 +149,45 @@ function start_game()
             end
         end
     end
-    display(scene)
+
+    GLFW.SetInputMode(glscreen, GLFW.CURSOR, GLFW.CURSOR_DISABLED)
+
+    # GLFW.SetKeyCallback(glscreen, esc_callback)
+    GLFW.make_fullscreen!(glscreen)
+    cam_controls = cameracontrols(scene)
+    last_time = time()
+    task = @async begin
+        while isopen(screen)
+            try
+                GLMakie.pollevents(screen)
+                yield()
+                timestep = time() - last_time
+                last_time = time()
+                move_cam!(scene, pc, timestep)
+                update_cam!(scene, pc)
+                time_per_frame = 1.0 / 30
+                t = time_ns()
+                GLMakie.render_frame(screen)
+                GLFW.SwapBuffers(glscreen)
+                t_elapsed = (time_ns() - t) / 1e9
+                diff = time_per_frame - t_elapsed
+                if diff > 0.001 # can't sleep less than 0.001
+                    sleep(diff)
+                else # if we don't sleep, we still need to yield explicitely to other tasks
+                    yield()
+                end
+                framerate[] = string(round(Int, 1 / t_elapsed), " fps")
+                camloc[] = string("Current Loc:", round.(Int, cam_controls.eyeposition[]))
+            catch e
+                @warn "Error in renderloop" exception=(e, catch_backtrace())
+                close(screen)
+            end
+        end
+        close(screen)
+    end
+    Base.errormonitor(task)
+
+    return screen
 end
 
 end # module Miner
