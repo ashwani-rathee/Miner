@@ -88,7 +88,13 @@ function move_cam!(scene, cam::PlayerController, timestep)
     left        = ispressed(scene, left_key)
     backward    = ispressed(scene, backward_key)
     forward     = ispressed(scene, forward_key)
-    translating = right || left || backward || forward
+    pos         = cam.eyeposition[] 
+    airbelow    = block_state(round(Int,pos[1]), round(Int,pos[2] - 3), round(Int,pos[3])) == BlockType(1) ? true : false
+    aircurrent    = block_state(round(Int,pos[1]), round(Int,pos[2]-2), round(Int,pos[3])) == BlockType(1) ? true : false
+    if (!aircurrent)
+        airbelow = false
+    end
+    translating = right || left || backward || forward || aircurrent || airbelow
 
     if translating
         # translation in camera space x/y/z direction
@@ -96,7 +102,7 @@ function move_cam!(scene, cam::PlayerController, timestep)
         xynorm = 2 * viewnorm * tand(0.5 * cam.fov[])
         translation = keyboard_translationspeed * timestep * Vec3f(
             xynorm * (right - left),
-            0.0,
+            -1.0 * (airbelow ? 1 : 0) + 1.0 * (aircurrent ? 0 : 1),
             viewnorm * (backward - forward)
         )
         _translate_cam!(scene, cam, translation)
@@ -152,9 +158,8 @@ function _translate_cam!(scene, cam::PlayerController, t)
     up  = Vec3f(0, 1, 0)
     u_z = normalize(Vec3f(1,0,1) .* (eyepos - lookat))
     u_x = normalize(Vec3f(1,0,1) .* cross(up, u_z))
-
-    trans = u_x * t[1] + u_z * t[3]
-
+    
+    trans = u_x * t[1] + u_z * t[3] + up * t[2]
     cam.eyeposition[] = eyepos + trans
     cam.lookat[] = lookat + trans
     return
@@ -197,7 +202,7 @@ function update_cam!(scene::Scene, cam::PlayerController)
 
     view = Makie.lookat(eyeposition, lookat, upvector)
 
-    aspect = Float32((/)(widths(scene.px_area[])...))
+    aspect = Float32((/)(widths(scene.viewport[])...))
     view_norm = norm(eyeposition - lookat)
     proj = perspectiveprojection(fov, aspect, view_norm * near, view_norm * far)
 

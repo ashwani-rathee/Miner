@@ -10,10 +10,9 @@ using Colors
 using FixedPointNumbers
 using FileIO
 
-
-include("player_controller.jl")
 include("world_manager.jl")
 include("block_manager.jl")
+include("player_controller.jl")
 
 export start_game
 
