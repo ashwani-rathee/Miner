@@ -22,6 +22,8 @@ struct PlayerController <: AbstractCamera
     fov::Observable{Float32}
     near::Observable{Float32}
     far::Observable{Float32}
+
+    curr_speed::Observable{Float32}
 end
 
 
@@ -35,6 +37,8 @@ function PlayerController(scene::Scene; kwargs...)
         right_key=get(kwargs, :right_key, Keyboard.d),
         forward_key=get(kwargs, :forward_key, Keyboard.w),
         backward_key=get(kwargs, :backward_key, Keyboard.s),
+        space_key=get(kwargs, :space_key, Keyboard.space),
+        
         # Mouse controls
         rotation_button=get(kwargs, :rotation_button, Keyboard._1),
     )
@@ -61,6 +65,7 @@ function PlayerController(scene::Scene; kwargs...)
         get(overwrites, :fov, Observable(45.0)),
         get(overwrites, :near, Observable(0.01)),
         get(overwrites, :far, Observable(100.0)),
+        get(overwrites, :curr_speed, Observable(0.0))
     )
 
     disconnect!(camera(scene))
@@ -80,7 +85,7 @@ end
 ################################################################################
 
 function move_cam!(scene, cam::PlayerController, timestep)
-    @extractvalue cam.controls (right_key, left_key, backward_key, forward_key)
+    @extractvalue cam.controls (right_key, left_key, backward_key, forward_key, space_key)
     @extractvalue cam.settings (keyboard_translationspeed,)
 
     pos = cam.eyeposition[]
@@ -88,26 +93,31 @@ function move_cam!(scene, cam::PlayerController, timestep)
     # translation
     right = ispressed(scene, right_key)
     left = ispressed(scene, left_key)
-
-    
     backward = ispressed(scene, backward_key)
     forward = ispressed(scene, forward_key)
-    rightmovable = block_state(round(Int, pos[1]-1), round(Int, pos[2]-2), round(Int, pos[3])) == BlockType(1) && block_state(round(Int, pos[1]-1), round(Int, pos[2]-1), round(Int, pos[3])) == BlockType(1)
-    leftmovable = block_state(round(Int, pos[1]+1), round(Int, pos[2]-2), round(Int, pos[3])) == BlockType(1) && block_state(round(Int, pos[1]+1), round(Int, pos[2]-1), round(Int, pos[3])) == BlockType(1)
+    jump = ispressed(scene, space_key)
 
-    backwardmovable = block_state(round(Int, pos[1]), round(Int, pos[2]-2), round(Int, pos[3] - 1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]-1), round(Int, pos[3] - 1)) == BlockType(1)
-    forwardmovable = block_state(round(Int, pos[1]), round(Int, pos[2]-2), round(Int, pos[3] + 1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]-1), round(Int, pos[3] + 1)) == BlockType(1)
+    rightmovable = block_state(round(Int, pos[1]-1), round(Int, pos[2]-2), round(Int, pos[3])) == BlockType(1) &&block_state(round(Int, pos[1]-1), round(Int, pos[2]-1), round(Int, pos[3])) == BlockType(1) && block_state(round(Int, pos[1]-1), round(Int, pos[2]), round(Int, pos[3])) == BlockType(1)
+    leftmovable =  block_state(round(Int, pos[1]+1), round(Int, pos[2]-2), round(Int, pos[3])) == BlockType(1) && block_state(round(Int, pos[1]+1), round(Int, pos[2]-1), round(Int, pos[3])) == BlockType(1) && block_state(round(Int, pos[1]+1), round(Int, pos[2]), round(Int, pos[3])) == BlockType(1)
+    backwardmovable =   block_state(round(Int, pos[1]), round(Int, pos[2]-2), round(Int, pos[3]-1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]-1), round(Int, pos[3] - 1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]), round(Int, pos[3] - 1)) == BlockType(1)
+    forwardmovable =   block_state(round(Int, pos[1]), round(Int, pos[2]-2), round(Int, pos[3]+1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]-1), round(Int, pos[3] + 1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]), round(Int, pos[3] + 1)) == BlockType(1)
+    
+    airbelow = block_state(round(Int, pos[1]), round(Int, pos[2] - 4), round(Int, pos[3])) == BlockType(1) ? true : false
+    aircurrent = block_state(round(Int, pos[1]), round(Int, pos[2] - 3), round(Int, pos[3])) == BlockType(1) ? true : false
+    
+    translating = right || left || backward || forward || jump || airbelow
 
-    rightmovable = 1
-    leftmovable = 1
-    backwardmovable = 1
-    forwardmovable = 1
-    airbelow = block_state(round(Int, pos[1]), round(Int, pos[2] - 3), round(Int, pos[3])) == BlockType(1) ? true : false
-    aircurrent = block_state(round(Int, pos[1]), round(Int, pos[2] - 2), round(Int, pos[3])) == BlockType(1) ? true : false
-    if (!aircurrent)
-        airbelow = false
+    if (airbelow == false)
+        cam.curr_speed[] = 0
     end
-    translating = right || left || backward || forward || aircurrent || airbelow
+
+    g = -9.8
+    vertical_Forces = g + (airbelow ? 0 : -g)
+
+
+    if (jump && cam.curr_speed[] < 20)
+        cam.curr_speed[] += 10
+    end
 
     if translating
         # translation in camera space x/y/z direction
@@ -115,11 +125,28 @@ function move_cam!(scene, cam::PlayerController, timestep)
         xynorm = 2 * viewnorm * tand(0.5 * cam.fov[])
         translation = keyboard_translationspeed * timestep * Vec3f(
                           xynorm * (right - left) * ((right-left) == 1 ? rightmovable : leftmovable),
-                          -1.0 * (airbelow ? 1 : 0) + 1.0 * (aircurrent ? 0 : 1),
+                          cam.curr_speed[] * timestep + 0.5 * vertical_Forces * timestep ^ 2,
                           viewnorm * (backward - forward) * ((backward-forward) == 1 ? backwardmovable : forwardmovable)
                       )
         _translate_cam!(scene, cam, translation)
     end
+
+    pos = cam.eyeposition[]
+    airbelow = block_state(round(Int, pos[1]), round(Int, pos[2] - 2), round(Int, pos[3])) == BlockType(1) ? true : false
+
+    vertical_Forces = g + (airbelow ? 0 : -g) + (!aircurrent ? -g : 0) 
+
+    cam.curr_speed[] = cam.curr_speed[] + vertical_Forces * timestep
+
+    if (airbelow == false)
+        cam.curr_speed[] = 0
+    end
+
+    aircurrent = block_state(round(Int, pos[1]), round(Int, pos[2] - 3), round(Int, pos[3])) == BlockType(1) ? true : false
+    
+    # if (!aircurrent)
+    #     cam.eyeposition[] = [pos[1], pos[2]+1, pos[3]]
+    # end
 end
 
 

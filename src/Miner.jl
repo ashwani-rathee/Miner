@@ -193,7 +193,7 @@ function start_game()
                     yield()
                 end
                 framerate[] = string(round(Int, 1 / t_elapsed), " fps")
-                camloc[] = string("Current Loc:", round.(Int, cam_controls.eyeposition[]))
+                camloc[] = string("Current Loc:", cam_controls.eyeposition[])
             catch e
                 @warn "Error in renderloop" exception=(e, catch_backtrace())
                 close(screen)
