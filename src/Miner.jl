@@ -60,7 +60,7 @@ function start_game()
     text!(subscene, Point(10, 30), text=locMouse)
 
     positionsAll = [Observable(Vector{GLMakie.Point3f0}([])) for i in 1:17]
-    for x in -32:1:32, y in -16:1:32, z in -32:1:32
+    for x in -100:1:100, y in -16:1:32, z in -100:1:100
         push!(positionsAll[Int(block_state(x, y, z))][], GLMakie.Point3f0(x, y, z))
     end
 
@@ -124,6 +124,23 @@ function start_game()
             deleteat!(p.positions[], idx)
             notify(p.positions)
         end
+    end
+
+    on(events(scene).scroll , priority = 100) do event
+        if(event[2] > 0)
+            # go to left
+            if (Int(currBlock[]) > 2)
+                currBlock[] = BlockType(Int(currBlock[]) - 1)
+                txt[] = string(currBlock[])
+            end
+        else 
+            # go to right
+            if (Int(currBlock[]) < 8)
+                currBlock[] = BlockType(Int(currBlock[]) + 1)
+                txt[] = string(currBlock[])
+            end
+        end
+        return Consume(false)
     end
 
     screen = GLMakie.Screen(scene; focus_on_show=true, float=true, ssao=true, start_renderloop=false)
