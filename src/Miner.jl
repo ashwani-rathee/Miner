@@ -77,7 +77,7 @@ function start_game()
     println("Sent message to server: ", message)
 
     # Channel to communicate received data
-    channel = Channel{String}(32)
+    channel = Channel{Vector{Float64}}(32)
 
     # Function to handle receiving data in a separate thread
     function receive_data(server, channel)
@@ -90,15 +90,10 @@ function start_game()
             end
             if data !== nothing
                 ack = String(data)
-                # @show "message:" ack
-                put!(channel, ack)  # Push data to channel
-            end
-
-            if (!isempty(channel))
-                value = take!(channel)
-                parts = split(value, ',')
+                #@show "message:" ack
+                parts = split(ack, ',')
                 x, y, z = parse.(Float64, parts[end-2:end])
-                positionPlayer[] = Point3f0(x, y, z)
+                put!(channel, [x,y,z])  # Push data to channel
             end
             sleep(0.001)
         end
@@ -271,7 +266,7 @@ function start_game()
                 curr_loc = cam_controls.eyeposition[]
                 d = euclidean(prev_loc, curr_loc)
                 if (d > 0.01)
-                    @show d
+                    #@show d
                     msg = join(map(x -> stringify(x), curr_loc), ",")
                     send(server, ip_address, port, string(key, ":loc:", msg))
 
@@ -287,6 +282,11 @@ function start_game()
                     sleep(diff)
                 else # if we don't sleep, we still need to yield explicitely to other tasks
                     yield()
+                end
+
+                while (!isempty(channel))
+                    x,y,z = take!(channel)
+                    positionPlayer[] = Point3f0(x, y, z)
                 end
 
                 framerate[] = string("Frame Rate: ", round(Int, 1 / t_elapsed))
