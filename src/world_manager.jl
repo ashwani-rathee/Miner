@@ -97,6 +97,10 @@ function block_state(x::Int, y::Int, z::Int)
 
     seaLevel = 14
 
+    if ([x,y,z] in  keys(world_changes))
+        return world_changes[[x,y,z]]
+    end
+
     if (x > 32 || x < -32 && z > 32 || z < -32)
         if (y <= surfaceBase-2)
             return BlockType(3)

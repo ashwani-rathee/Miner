@@ -38,7 +38,7 @@ function PlayerController(scene::Scene; kwargs...)
         forward_key=get(kwargs, :forward_key, Keyboard.w),
         backward_key=get(kwargs, :backward_key, Keyboard.s),
         space_key=get(kwargs, :space_key, Keyboard.space),
-        
+
         # Mouse controls
         rotation_button=get(kwargs, :rotation_button, Keyboard._1),
     )
@@ -103,8 +103,8 @@ function move_cam!(scene, cam::PlayerController, timestep)
     forwardmovable =   block_state(round(Int, pos[1]), round(Int, pos[2]-2), round(Int, pos[3]+1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]-1), round(Int, pos[3] + 1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]), round(Int, pos[3] + 1)) == BlockType(1)
     
     airbelow = block_state(round(Int, pos[1]), round(Int, pos[2] - 4), round(Int, pos[3])) == BlockType(1) ? true : false
-    aircurrent = block_state(round(Int, pos[1]), round(Int, pos[2] - 3), round(Int, pos[3])) == BlockType(1) ? true : false
-    
+    #aircurrent = block_state(round(Int, pos[1]), round(Int, pos[2] - 3), round(Int, pos[3])) == BlockType(1) ? true : false
+
     translating = right || left || backward || forward || jump || airbelow
 
     if (airbelow == false)
@@ -114,39 +114,28 @@ function move_cam!(scene, cam::PlayerController, timestep)
     g = -9.8
     vertical_Forces = g + (airbelow ? 0 : -g)
 
-
-    if (jump && cam.curr_speed[] < 20)
-        cam.curr_speed[] += 10
+    if (jump && !airbelow)
+        cam.curr_speed[] = 10
     end
 
     if translating
+        force_move = 0.5 * vertical_Forces * timestep * timestep
+        vertical_movement = (cam.curr_speed[] * timestep + force_move) * 4
+
         # translation in camera space x/y/z direction
         viewnorm = norm(cam.lookat[] - cam.eyeposition[])
         xynorm = 2 * viewnorm * tand(0.5 * cam.fov[])
         translation = keyboard_translationspeed * timestep * Vec3f(
                           xynorm * (right - left) * ((right-left) == 1 ? rightmovable : leftmovable),
-                          cam.curr_speed[] * timestep + 0.5 * vertical_Forces * timestep ^ 2,
+                          vertical_movement,
                           viewnorm * (backward - forward) * ((backward-forward) == 1 ? backwardmovable : forwardmovable)
                       )
+
         _translate_cam!(scene, cam, translation)
     end
 
-    pos = cam.eyeposition[]
-    airbelow = block_state(round(Int, pos[1]), round(Int, pos[2] - 2), round(Int, pos[3])) == BlockType(1) ? true : false
-
-    vertical_Forces = g + (airbelow ? 0 : -g) + (!aircurrent ? -g : 0) 
-
+    vertical_Forces = g + (airbelow ? 0 : -g)
     cam.curr_speed[] = cam.curr_speed[] + vertical_Forces * timestep
-
-    if (airbelow == false)
-        cam.curr_speed[] = 0
-    end
-
-    aircurrent = block_state(round(Int, pos[1]), round(Int, pos[2] - 3), round(Int, pos[3])) == BlockType(1) ? true : false
-    
-    # if (!aircurrent)
-    #     cam.eyeposition[] = [pos[1], pos[2]+1, pos[3]]
-    # end
 end
 
 
