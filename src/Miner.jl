@@ -12,6 +12,7 @@ using FileIO
 using Sockets
 using Distances
 using Printf
+using JSON
 
 world_changes = Dict()
 
@@ -24,7 +25,7 @@ include("player_controller.jl")
 
 export start_game
 
-stringify(x,fmt="%.2f") = Printf.format(Printf.Format(fmt), x)
+stringify(x, fmt="%.2f") = Printf.format(Printf.Format(fmt), x)
 
 obj_markers = Dict(stone => (16, 6),
     water => (4, 10),
@@ -58,16 +59,21 @@ function start_game()
     ]
     linesegments!(subscene, crosshair; color=(:red, 0.5), inspectable=false, linewidth=2, space=:relative)
 
-    ip_address = ip"65.1.86.164"
-    port = 12345
-    # ip_address = ip"18.119.235.50"
-    # port = 10120
+    # Read JSON file
+    config = JSON.parsefile("config.json")
+
+    # Extract values
+    ip_address = IPv4(config["ip_address"])
+    port = config["port"]
+    key = config["key"]
+    player_name = config["player_name"]
+
     interval = 1
     server = Sockets.UDPSocket()
     bind(server, ip"0.0.0.0", port)
 
-    message = "18359d978d273993301e4bc794875c53b31be3a0c4677bc8ad545fd1bf2eb5ae:ClientHello:ashwani"
-    send(server,  ip_address, port, message)
+    message = string(key, ":ClientHello:", player_name)
+    send(server, ip_address, port, message)
     println("Sent message to server: ", message)
 
     # Channel to communicate received data
@@ -84,12 +90,12 @@ function start_game()
             end
             if data !== nothing
                 ack = String(data)
-               # @show "message:" ack
+                # @show "message:" ack
                 put!(channel, ack)  # Push data to channel
             end
 
             if (!isempty(channel))
-                value = take!(channel)  
+                value = take!(channel)
                 parts = split(value, ',')
                 x, y, z = parse.(Float64, parts[end-2:end])
                 positionPlayer[] = Point3f0(x, y, z)
@@ -101,7 +107,7 @@ function start_game()
     # Start receiving data in a separate thread
     thread = Threads.@spawn receive_data(server, channel)
 
-            
+
     c = cameracontrols(scene)
     c.eyeposition[] = (5, surface_height(0, 0) + 3, 5)
     c.lookat[] = Vec3f(6, surface_height(0, 0) + 3, 6)
@@ -134,8 +140,8 @@ function start_game()
         push!(positionsAll[Int(block_state(x, y, z))][], GLMakie.Point3f0(x, y, z))
     end
 
-    positionPlayer = Observable(GLMakie.Point3f0(30.0,30.0,30.0))
-    meshscatter!(scene, positionPlayer; markersize=1,marker=return_mesh(BlockType(1)))
+    positionPlayer = Observable(GLMakie.Point3f0(30.0, 30.0, 30.0))
+    meshscatter!(scene, positionPlayer; markersize=1, marker=return_mesh(BlockType(1)))
 
     for (idx, i) in enumerate(positionsAll)
         marker = return_mesh(BlockType(idx))
@@ -266,9 +272,9 @@ function start_game()
                 d = euclidean(prev_loc, curr_loc)
                 if (d > 0.01)
                     @show d
-                    msg= join(map(x -> stringify(x), curr_loc), ",")
-                    send(server,  ip_address, port, string("18359d978d273993301e4bc794875c53b31be3a0c4677bc8ad545fd1bf2eb5ae:loc:", msg))
-                    
+                    msg = join(map(x -> stringify(x), curr_loc), ",")
+                    send(server, ip_address, port, string(key, ":loc:", msg))
+
                     #println("Sent message to server: ", msg)
                 end
                 time_per_frame = 1.0 / 30
@@ -291,7 +297,7 @@ function start_game()
             end
         end
 
-        send(server,  ip_address, port, "18359d978d273993301e4bc794875c53b31be3a0c4677bc8ad545fd1bf2eb5ae:ClientBye:ashwani")
+        send(server, ip_address, port, string(key, ":ClientBye:", player_name))
 
         close(screen)
     end
