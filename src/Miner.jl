@@ -94,25 +94,37 @@ function start_game()
                 ack = String(data)
                 @show ack
                 parts = split(ack, ':')
-                if (parts[1] == key)
-                    @show "Key Matched!"
-                    if (parts[2] == "Response,SendState")
-                        @show part[3]
-                    elseif (parts[2] == "Response,locchange")
-                        #@show "message:" ack
+                #@info parts
+                if(parts[1] == "testcode")
+                    #@show "Key Matched"
+                    if(parts[2] == "Response,locchange")
+                        #@show parts[3]
                         parts1 = split(parts[3], ',')
+                        #@show parts1
                         x, y, z = parse.(Float64, parts1[end-2:end])
-                        put!(channel, [x,y,z])  # Push data to channel
+                        #@info x y z
+                        put!(channel, [x,y,z])
                     end
                 end
+                # if (parts[1] == key)
+                #     @show "Key Matched!"
+                #     if (parts[2] == "Response,SendState")
+                #         @show part[3]
+                #     elseif (parts[2] == "Response,locchange")
+                #         #@show "message:" ack
+                #         # parts1 = split(parts[3], ',')
+                #         # x, y, z = parse.(Float64, parts1[end-2:end])
+                #         # put!(channel, [x,y,z])  # Push data to channel
+                #     end
+                # end
                 #@show "message:" ack
-                parts = split(ack, ',')
-                if(parts[1] == "NewLoc")
-                    x, y, z = parse.(Float64, parts[end-2:end])
-                    put!(channel, [x,y,z])  # Push data to channel
-                else 
-                    @show 
-                end
+                # parts = split(ack, ',')
+                # if(parts[1] == "NewLoc")
+                #     x, y, z = parse.(Float64, parts[end-2:end])
+                #     put!(channel, [x,y,z])  # Push data to channel
+                # else 
+                #     @show 
+                # end
             end
             sleep(0.001)
         end
@@ -173,7 +185,7 @@ function start_game()
         end
     end
     positionPlayer = Observable(GLMakie.Point3f0(30.0, 20.0, 30.0))
-    meshscatter!(scene, positionPlayer; markersize=1, marker=return_mesh(BlockType(18)), color=tex)
+    meshscatter!(scene, positionPlayer; markersize=1, marker=return_mesh(BlockType(1)))
 
     # for block adding and breaking
     on(events(scene).mousebutton) do button
