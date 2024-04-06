@@ -62,6 +62,7 @@ end
     properblueflower = 16 
 
     musicbox = 17
+    player=18
 end
 
 """
@@ -96,6 +97,18 @@ function block_state(x::Int, y::Int, z::Int)
     surfaceY = surfaceBase + rands;
 
     seaLevel = 14
+
+    if ([x,y,z] in  keys(world_changes))
+        return world_changes[[x,y,z]]
+    end
+
+    if (x > 32 || x < -32 && z > 32 || z < -32)
+        if (y <= surfaceBase-2)
+            return BlockType(3)
+        else
+            return BlockType(1)
+        end
+    end
     if (y == surfaceY && x == 10 && z == 10)
         return BlockType(17)
     elseif (y<surfaceY)

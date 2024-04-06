@@ -13,15 +13,17 @@ struct PlayerController <: AbstractCamera
     pulser::Observable{Float64}
     selected::Observable{Bool}
 
-	# view matrix
+    # view matrix
     eyeposition::Observable{Vec3f}
     lookat::Observable{Vec3f}
     upvector::Observable{Vec3f}
 
-	# perspective projection matrix
+    # perspective projection matrix
     fov::Observable{Float32}
     near::Observable{Float32}
     far::Observable{Float32}
+
+    curr_speed::Observable{Float32}
 end
 
 
@@ -31,18 +33,20 @@ function PlayerController(scene::Scene; kwargs...)
     controls = Attributes(
         # Keyboard controls
         # Translations
-        left_key      = get(kwargs, :left_key,  Keyboard.a),
-        right_key     = get(kwargs, :right_key,  Keyboard.d),
-        forward_key   = get(kwargs, :forward_key,  Keyboard.w),
-        backward_key  = get(kwargs, :backward_key,  Keyboard.s),
+        left_key=get(kwargs, :left_key, Keyboard.a),
+        right_key=get(kwargs, :right_key, Keyboard.d),
+        forward_key=get(kwargs, :forward_key, Keyboard.w),
+        backward_key=get(kwargs, :backward_key, Keyboard.s),
+        space_key=get(kwargs, :space_key, Keyboard.space),
+
         # Mouse controls
-        rotation_button = get(kwargs, :rotation_button, Keyboard._1),
+        rotation_button=get(kwargs, :rotation_button, Keyboard._1),
     )
 
     settings = Attributes(
-        keyboard_translationspeed = get(kwargs, :keyboard_translationspeed, 5f0),
-        mouse_rotationspeed = get(kwargs, :mouse_rotationspeed, 1f0),
-        update_rate = get(kwargs, :update_rate, 1/30),
+        keyboard_translationspeed=get(kwargs, :keyboard_translationspeed, 3.0f0),
+        mouse_rotationspeed=get(kwargs, :mouse_rotationspeed, 1.0f0),
+        update_rate=get(kwargs, :update_rate, 1 / 30),
     )
 
     cam = PlayerController(
@@ -54,13 +58,14 @@ function PlayerController(scene::Scene; kwargs...)
 
         # Semi-Internal - view matrix
         get(overwrites, :eyeposition, Observable(Vec3f(3, 1, 0))),
-        get(overwrites, :lookat,      Observable(Vec3f(0, 1, 0))),
-        get(overwrites, :upvector,    Observable(Vec3f(0, 1, 0))),
+        get(overwrites, :lookat, Observable(Vec3f(0, 1, 0))),
+        get(overwrites, :upvector, Observable(Vec3f(0, 1, 0))),
 
         # Semi-Internal - projection matrix
         get(overwrites, :fov, Observable(45.0)),
         get(overwrites, :near, Observable(0.01)),
         get(overwrites, :far, Observable(100.0)),
+        get(overwrites, :curr_speed, Observable(0.0))
     )
 
     disconnect!(camera(scene))
@@ -80,33 +85,63 @@ end
 ################################################################################
 
 function move_cam!(scene, cam::PlayerController, timestep)
-    @extractvalue cam.controls (right_key, left_key, backward_key, forward_key)
-    @extractvalue cam.settings (keyboard_translationspeed, )
+    @extractvalue cam.controls (right_key, left_key, backward_key, forward_key, space_key)
+    @extractvalue cam.settings (keyboard_translationspeed,)
+
+    pos = cam.eyeposition[]
 
     # translation
-    right       = ispressed(scene, right_key)
-    left        = ispressed(scene, left_key)
-    backward    = ispressed(scene, backward_key)
-    forward     = ispressed(scene, forward_key)
-    translating = right || left || backward || forward
+    right = ispressed(scene, right_key)
+    left = ispressed(scene, left_key)
+    backward = ispressed(scene, backward_key)
+    forward = ispressed(scene, forward_key)
+    jump = ispressed(scene, space_key)
+
+    rightmovable = block_state(round(Int, pos[1]-1), round(Int, pos[2]-2), round(Int, pos[3])) == BlockType(1) &&block_state(round(Int, pos[1]-1), round(Int, pos[2]-1), round(Int, pos[3])) == BlockType(1) && block_state(round(Int, pos[1]-1), round(Int, pos[2]), round(Int, pos[3])) == BlockType(1)
+    leftmovable =  block_state(round(Int, pos[1]+1), round(Int, pos[2]-2), round(Int, pos[3])) == BlockType(1) && block_state(round(Int, pos[1]+1), round(Int, pos[2]-1), round(Int, pos[3])) == BlockType(1) && block_state(round(Int, pos[1]+1), round(Int, pos[2]), round(Int, pos[3])) == BlockType(1)
+    backwardmovable =   block_state(round(Int, pos[1]), round(Int, pos[2]-2), round(Int, pos[3]-1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]-1), round(Int, pos[3] - 1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]), round(Int, pos[3] - 1)) == BlockType(1)
+    forwardmovable =   block_state(round(Int, pos[1]), round(Int, pos[2]-2), round(Int, pos[3]+1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]-1), round(Int, pos[3] + 1)) == BlockType(1) && block_state(round(Int, pos[1]), round(Int, pos[2]), round(Int, pos[3] + 1)) == BlockType(1)
+    
+    airbelow = block_state(round(Int, pos[1]), round(Int, pos[2] - 4), round(Int, pos[3])) == BlockType(1) ? true : false
+    #aircurrent = block_state(round(Int, pos[1]), round(Int, pos[2] - 3), round(Int, pos[3])) == BlockType(1) ? true : false
+
+    translating = right || left || backward || forward || jump || airbelow
+
+    if (airbelow == false)
+        cam.curr_speed[] = 0
+    end
+
+    g = -9.8
+    vertical_Forces = g + (airbelow ? 0 : -g)
+
+    if (jump && !airbelow)
+        cam.curr_speed[] = 10
+    end
 
     if translating
+        force_move = 0.5 * vertical_Forces * timestep * timestep
+        vertical_movement = (cam.curr_speed[] * timestep + force_move) * 4
+
         # translation in camera space x/y/z direction
         viewnorm = norm(cam.lookat[] - cam.eyeposition[])
         xynorm = 2 * viewnorm * tand(0.5 * cam.fov[])
         translation = keyboard_translationspeed * timestep * Vec3f(
-            xynorm * (right - left),
-            0.0,
-            viewnorm * (backward - forward)
-        )
+                          xynorm * (right - left) * ((right-left) == 1 ? rightmovable : leftmovable),
+                          vertical_movement,
+                          viewnorm * (backward - forward) * ((backward-forward) == 1 ? backwardmovable : forwardmovable)
+                      )
+
         _translate_cam!(scene, cam, translation)
     end
+
+    vertical_Forces = g + (airbelow ? 0 : -g)
+    cam.curr_speed[] = cam.curr_speed[] + vertical_Forces * timestep
 end
 
 
 function add_rotation!(scene, cam::PlayerController)
-    @extract cam.controls (rotation_button, )
-    @extract cam.settings (mouse_rotationspeed, )
+    @extract cam.controls (rotation_button,)
+    @extract cam.settings (mouse_rotationspeed,)
 
     last_mousepos = RefValue(Vec2f(0, 0))
     e = events(scene)
@@ -117,7 +152,7 @@ function add_rotation!(scene, cam::PlayerController)
         rot_scaling = mouse_rotationspeed[] * (e.window_dpi[] * 0.001)
         mp = (last_mousepos[] .- mousepos) * 0.01f0 * rot_scaling
         last_mousepos[] = mousepos
-        rotate_cam!(scene, cam, Vec3f(-mp[2], mp[1], 0f0), true)
+        rotate_cam!(scene, cam, Vec3f(-mp[2], mp[1], 0.0f0), true)
         return Consume(true)
         return Consume(false)
     end
@@ -149,12 +184,11 @@ function _translate_cam!(scene, cam::PlayerController, t)
     eyepos = cam.eyeposition[]
 
     # TODO make sure u_x and u_y don't become 0
-    up  = Vec3f(0, 1, 0)
-    u_z = normalize(Vec3f(1,0,1) .* (eyepos - lookat))
-    u_x = normalize(Vec3f(1,0,1) .* cross(up, u_z))
+    up = Vec3f(0, 1, 0)
+    u_z = normalize(Vec3f(1, 0, 1) .* (eyepos - lookat))
+    u_x = normalize(Vec3f(1, 0, 1) .* cross(up, u_z))
 
-    trans = u_x * t[1] + u_z * t[3]
-
+    trans = u_x * t[1] + u_z * t[3] + up * t[2]
     cam.eyeposition[] = eyepos + trans
     cam.lookat[] = lookat + trans
     return
@@ -197,7 +231,7 @@ function update_cam!(scene::Scene, cam::PlayerController)
 
     view = Makie.lookat(eyeposition, lookat, upvector)
 
-    aspect = Float32((/)(widths(scene.px_area[])...))
+    aspect = Float32((/)(widths(scene.viewport[])...))
     view_norm = norm(eyeposition - lookat)
     proj = perspectiveprojection(fov, aspect, view_norm * near, view_norm * far)
 
@@ -206,10 +240,10 @@ function update_cam!(scene::Scene, cam::PlayerController)
     scene.camera.eyeposition[] = cam.eyeposition[]
 end
 # Update camera position via camera Position & Orientation
-function update_cam!(scene::Scene, camera::PlayerController, eyeposition::VecTypes, lookat::VecTypes, up::VecTypes = camera.upvector[])
-    camera.lookat[]      = Vec3f(lookat)
+function update_cam!(scene::Scene, camera::PlayerController, eyeposition::VecTypes, lookat::VecTypes, up::VecTypes=camera.upvector[])
+    camera.lookat[] = Vec3f(lookat)
     camera.eyeposition[] = Vec3f(eyeposition)
-    camera.upvector[]    = Vec3f(up)
+    camera.upvector[] = Vec3f(up)
     update_cam!(scene, camera)
     return
 end
@@ -222,17 +256,17 @@ Set the camera position based on two angles `0 ≤ ϕ ≤ 2π` and `-pi/2 ≤ θ
 and an optional radius around the current `cam.lookat[]`.
 """
 function update_cam!(
-        scene::Scene, camera::PlayerController, phi::Real, theta::Real,
-        radius::Real = norm(camera.eyeposition[] - camera.lookat[]),
-        center = camera.lookat[]
-    )
+    scene::Scene, camera::PlayerController, phi::Real, theta::Real,
+    radius::Real=norm(camera.eyeposition[] - camera.lookat[]),
+    center=camera.lookat[]
+)
     st, ct = sincos(theta)
     sp, cp = sincos(phi)
     v = Vec3f(ct * cp, ct * sp, st)
     u = Vec3f(-st * cp, -st * sp, ct)
-    camera.lookat[]      = center
+    camera.lookat[] = center
     camera.eyeposition[] = center .+ radius * v
-    camera.upvector[]    = u
+    camera.upvector[] = u
     update_cam!(scene, camera)
     return
 end

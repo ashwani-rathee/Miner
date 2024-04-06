@@ -9,13 +9,32 @@ using GeometryBasics
 using Colors
 using FixedPointNumbers
 using FileIO
+using Sockets
+using Distances
+using Printf
+using JSON
 
+world_changes = Dict()
 
-include("player_controller.jl")
+world_changelocs = []
+world_changeblocks = []
+world_changemsg = 1
 include("world_manager.jl")
 include("block_manager.jl")
+include("player_controller.jl")
 
 export start_game
+
+stringify(x, fmt="%.2f") = Printf.format(Printf.Format(fmt), x)
+
+obj_markers = Dict(stone => (16, 6),
+    water => (4, 10),
+    grass => (14, 1),
+    dirt => (16, 1),
+    wood => (15, 5),
+    leaves => (16, 15),
+    bedrock => (4, 1),
+)
 
 function start_game()
     @info "Starting Game!"
@@ -23,47 +42,133 @@ function start_game()
     scene = Scene(; backgroundcolor=:lightblue)
     pc = PlayerController(scene)
 
+    empty!(world_changes)
+    world_changelocs = []
+    world_changeblocks = []
+
     subscene = Scene(scene)
     campixel!(subscene)
     gap = 3 * (1 / size(scene)[1])
     line = 10 * (1 / size(scene)[1])
     mid = Point2f(0.5, 0.5)
     crosshair = Point2f[
-        mid .+ Point2f(gap, 0), mid .+ Point2f(gap + line, 0),
-        mid .- Point2f(gap, 0), mid .- Point2f(gap + line, 0),
-        mid .+ Point2f(0, gap), mid .+ Point2f(0, gap + line),
-        mid .- Point2f(0, gap), mid .- Point2f(0, gap + line),
+        mid.+Point2f(gap, 0), mid.+Point2f(gap + line, 0),
+        mid.-Point2f(gap, 0), mid.-Point2f(gap + line, 0),
+        mid.+Point2f(0, gap), mid.+Point2f(0, gap + line),
+        mid.-Point2f(0, gap), mid.-Point2f(0, gap + line),
     ]
     linesegments!(subscene, crosshair; color=(:red, 0.5), inspectable=false, linewidth=2, space=:relative)
 
-    world_changelocs = []
-    world_changeblocks = []
+    # Read JSON file
+    config = JSON.parsefile("config.json")
+
+    # Extract values
+    ip_address = IPv4(config["ip_address"])
+    port = config["port"]
+    key = config["key"]
+    player_name = config["player_name"]
+    # Extract loc values
+    x, y, z = config["loc"]
+
+    interval = 1
+    server = Sockets.UDPSocket()
+    bind(server, ip"0.0.0.0", port)
+
+    message = string(key, ":ClientHello:", player_name,",", x, ", ", y, ",",z)
+    send(server, ip_address, port, message)
+    println("Sent message to server: ", message)
+
+    # Channel to communicate received data
+    channel = Channel{Vector{Float64}}(32)
+
+    # Function to handle receiving data in a separate thread
+    function receive_data(server, channel)
+        #@show "Running recv loop.."
+        while true
+            data = try
+                recv(server)
+            catch
+                nothing
+            end
+            if data !== nothing
+                ack = String(data)
+                @show ack
+                parts = split(ack, ':')
+                #@info parts
+                if(parts[1] == "testcode")
+                    #@show "Key Matched"
+                    if(parts[2] == "Response,locchange")
+                        #@show parts[3]
+                        parts1 = split(parts[3], ',')
+                        #@show parts1
+                        x, y, z = parse.(Float64, parts1[end-2:end])
+                        #@info x y z
+                        put!(channel, [x,y,z])
+                    end
+                end
+                # if (parts[1] == key)
+                #     @show "Key Matched!"
+                #     if (parts[2] == "Response,SendState")
+                #         @show part[3]
+                #     elseif (parts[2] == "Response,locchange")
+                #         #@show "message:" ack
+                #         # parts1 = split(parts[3], ',')
+                #         # x, y, z = parse.(Float64, parts1[end-2:end])
+                #         # put!(channel, [x,y,z])  # Push data to channel
+                #     end
+                # end
+                #@show "message:" ack
+                # parts = split(ack, ',')
+                # if(parts[1] == "NewLoc")
+                #     x, y, z = parse.(Float64, parts[end-2:end])
+                #     put!(channel, [x,y,z])  # Push data to channel
+                # else 
+                #     @show 
+                # end
+            end
+            sleep(0.001)
+        end
+    end
+
+    # Start receiving data in a separate thread
+    thread = Threads.@spawn receive_data(server, channel)
+
+    message = string(key, ":SendState:All")
+    send(server, ip_address, port, message)
+    println("Sent message to server: ", message)
 
     c = cameracontrols(scene)
-    c.eyeposition[] = (5, surface_height(0, 0) + 3, 5)
-    c.lookat[] = Vec3f(6, surface_height(0, 0) + 3, 6)
+    c.eyeposition[] = (x, y, z)
+    c.lookat[] = Vec3f(x+1, y, z+1)
     c.upvector[] = (1, 1, 1)
     update_cam!(scene)
 
+
+    prev_loc = c.eyeposition[]
+    curr_loc = c.eyeposition[]
+
+    framerate = Observable("Frame Rate: 10")
+    text!(subscene, Point(15, 45), text=framerate)
+
+    camloc = Observable("Curr Loc: [0,0,0]")
+    text!(subscene, Point(15, 30), text=camloc)
+
+    locMouse = Observable("Mouse CLoc: [0,0,0]")
+    text!(subscene, Point(15, 15), text=locMouse)
+
     currBlock = Observable(BlockType(2))
-    text!(subscene, Point(10, 10), text="Block In-Hand:")
+    txt = Observable("Item in hand: stone")
+    text!(subscene, Point(15, 120), text=txt)
+    cor1, cor2 = obj_markers[currBlock[]]
+    node = Observable(rotr90(tex[(cor1-1)*16+1:(cor1-1)*16+16, (cor2-1)*16+1:(cor2-1)*16+16]))
+    image!(subscene, 15 .. 65, 65 .. 115, node)
 
-    txt = Observable("stone")
-    text!(subscene, Point(120, 10), text=txt)
-
-    framerate = Observable("10 fps")
-    text!(subscene, Point(170, 10), text=framerate)
-
-    camloc = Observable("Current Loc: [0,0,0]")
-    text!(subscene, Point(220, 10), text=camloc)
-
-    locMouse = Observable("Mouse click on object at: [0,0,0]")
-    text!(subscene, Point(10, 30), text=locMouse)
 
     positionsAll = [Observable(Vector{GLMakie.Point3f0}([])) for i in 1:17]
-    for x in -32:1:32, y in -16:1:32, z in -32:1:32
+    for x in -100:1:100, y in -16:1:32, z in -100:1:100
         push!(positionsAll[Int(block_state(x, y, z))][], GLMakie.Point3f0(x, y, z))
     end
+
 
     for (idx, i) in enumerate(positionsAll)
         marker = return_mesh(BlockType(idx))
@@ -79,6 +184,8 @@ function start_game()
             a = meshscatter!(scene, i; markersize=1, marker=marker, color=tex)
         end
     end
+    positionPlayer = Observable(GLMakie.Point3f0(30.0, 20.0, 30.0))
+    meshscatter!(scene, positionPlayer; markersize=1, marker=return_mesh(BlockType(1)))
 
     # for block adding and breaking
     on(events(scene).mousebutton) do button
@@ -86,7 +193,7 @@ function start_game()
             p, idx = pick(scene, round.(Int, size(scene) ./ 2))
             isnothing(p) && return
 
-            locMouse[] = string("Mouse click on object at: ", round.(Int, p.positions[][idx]))
+            locMouse[] = string("Mouse CLoc: ", round.(Int, p.positions[][idx]))
             loc = p.positions[][idx]
 
             a = cameracontrols(scene).eyeposition[]
@@ -105,26 +212,51 @@ function start_game()
 
             a = currBlock[]
             if (!isnothing(buildable))
+                world_changes[buildable] = a
                 push!(positionsAll[Int(a)][], buildable)
                 push!(world_changelocs, buildable)
                 push!(world_changeblocks, a)
             end
-
             notify(positionsAll[Int(a)])
         elseif (button.button == Makie.Mouse.right && button.action == Makie.Mouse.press)
             p, idx = pick(scene, round.(Int, size(scene) ./ 2))
             isnothing(p) && return
 
-            locMouse[] = string("Mouse click on object at: ", round.(Int, p.positions[][idx]))
+            locMouse[] = string("Mouse CLoc: ", round.(Int, p.positions[][idx]))
             loc = p.positions[][idx]
-            if (p.positions[][idx] in world_changelocs)
-                idx1 = findfirst(x -> x == p.positions[][idx], world_changelocs)
-                deleteat!(world_changelocs, idx1)
-                deleteat!(world_changeblocks, idx1)
+            @show block_state(round(Int, loc[1]), round(Int, loc[2]), round(Int, loc[3]))
+            if (block_state(round(Int, loc[1]), round(Int, loc[2]), round(Int, loc[3])) != bedrock)
+                if (p.positions[][idx] in world_changelocs)
+
+                    idx1 = findfirst(x -> x == p.positions[][idx], world_changelocs)
+                    deleteat!(world_changelocs, idx1)
+                    deleteat!(world_changeblocks, idx1)
+                end
+                world_changes[loc] = air
+                deleteat!(p.positions[], idx)
+                notify(p.positions)
             end
-            deleteat!(p.positions[], idx)
-            notify(p.positions)
         end
+    end
+
+    on(events(scene).scroll, priority=100) do event
+        if (event[2] > 0)
+            # go to left
+            if (Int(currBlock[]) > 2)
+                currBlock[] = BlockType(Int(currBlock[]) - 1)
+                txt[] = string("Item in hand: ", currBlock[])
+            end
+        else
+            # go to right
+            if (Int(currBlock[]) < 8)
+                currBlock[] = BlockType(Int(currBlock[]) + 1)
+                txt[] = string("Item in hand: ", currBlock[])
+            end
+        end
+
+        cor1, cor2 = obj_markers[currBlock[]]
+        node[] = rotr90(tex[(cor1-1)*16+1:(cor1-1)*16+16, (cor2-1)*16+1:(cor2-1)*16+16])
+        return Consume(false)
     end
 
     screen = GLMakie.Screen(scene; focus_on_show=true, float=true, ssao=true, start_renderloop=false)
@@ -153,7 +285,7 @@ function start_game()
     GLFW.SetInputMode(glscreen, GLFW.CURSOR, GLFW.CURSOR_DISABLED)
 
     # GLFW.SetKeyCallback(glscreen, esc_callback)
-    GLFW.make_fullscreen!(glscreen)
+    # GLFW.make_fullscreen!(glscreen)
     cam_controls = cameracontrols(scene)
     last_time = time()
     task = @async begin
@@ -163,8 +295,18 @@ function start_game()
                 yield()
                 timestep = time() - last_time
                 last_time = time()
+                prev_loc = curr_loc
                 move_cam!(scene, pc, timestep)
                 update_cam!(scene, pc)
+                curr_loc = cam_controls.eyeposition[]
+                d = euclidean(prev_loc, curr_loc)
+                if (d > 0.01)
+                    #@show d
+                    msg = join(map(x -> stringify(x), curr_loc), ",")
+                    send(server, ip_address, port, string(key, ":loc:", msg))
+
+                    #println("Sent message to server: ", msg)
+                end
                 time_per_frame = 1.0 / 30
                 t = time_ns()
                 GLMakie.render_frame(screen)
@@ -176,12 +318,30 @@ function start_game()
                 else # if we don't sleep, we still need to yield explicitely to other tasks
                     yield()
                 end
-                framerate[] = string(round(Int, 1 / t_elapsed), " fps")
-                camloc[] = string("Current Loc:", round.(Int, cam_controls.eyeposition[]))
+
+                while (!isempty(channel))
+                    x,y,z = take!(channel)
+                    positionPlayer[] = Point3f0(x, y, z)
+                end
+
+                framerate[] = string("Frame Rate: ", round(Int, 1 / t_elapsed))
+                camloc[] = string("Current Loc: ", cam_controls.eyeposition[])
             catch e
-                @warn "Error in renderloop" exception=(e, catch_backtrace())
+                @warn "Error in renderloop" exception = (e, catch_backtrace())
                 close(screen)
             end
+        end
+
+        send(server, ip_address, port, string(key, ":ClientBye:", player_name))
+        #@show cam_controls.eyeposition[] msg = join(map(x -> stringify(x), cam_controls.eyeposition[]), ",")
+        loc = cam_controls.eyeposition[]
+        # Update loc data
+        new_loc = [loc[1], loc[2], loc[3]]  # Example new loc data
+        config["loc"] = new_loc
+
+        # Write updated config back to file
+        JSON.open("config.json", "w") do file
+            JSON.print(file, config)
         end
         close(screen)
     end
