@@ -62,6 +62,7 @@ end
     properblueflower = 16 
 
     musicbox = 17
+    player=18
 end
 
 """

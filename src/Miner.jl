@@ -67,12 +67,14 @@ function start_game()
     port = config["port"]
     key = config["key"]
     player_name = config["player_name"]
+    # Extract loc values
+    x, y, z = config["loc"]
 
     interval = 1
     server = Sockets.UDPSocket()
     bind(server, ip"0.0.0.0", port)
 
-    message = string(key, ":ClientHello:", player_name)
+    message = string(key, ":ClientHello:", player_name,",", x, ", ", y, ",",z)
     send(server, ip_address, port, message)
     println("Sent message to server: ", message)
 
@@ -90,10 +92,27 @@ function start_game()
             end
             if data !== nothing
                 ack = String(data)
+                @show ack
+                parts = split(ack, ':')
+                if (parts[1] == key)
+                    @show "Key Matched!"
+                    if (parts[2] == "Response,SendState")
+                        @show part[3]
+                    elseif (parts[2] == "Response,locchange")
+                        #@show "message:" ack
+                        parts1 = split(parts[3], ',')
+                        x, y, z = parse.(Float64, parts1[end-2:end])
+                        put!(channel, [x,y,z])  # Push data to channel
+                    end
+                end
                 #@show "message:" ack
                 parts = split(ack, ',')
-                x, y, z = parse.(Float64, parts[end-2:end])
-                put!(channel, [x,y,z])  # Push data to channel
+                if(parts[1] == "NewLoc")
+                    x, y, z = parse.(Float64, parts[end-2:end])
+                    put!(channel, [x,y,z])  # Push data to channel
+                else 
+                    @show 
+                end
             end
             sleep(0.001)
         end
@@ -102,10 +121,13 @@ function start_game()
     # Start receiving data in a separate thread
     thread = Threads.@spawn receive_data(server, channel)
 
+    message = string(key, ":SendState:All")
+    send(server, ip_address, port, message)
+    println("Sent message to server: ", message)
 
     c = cameracontrols(scene)
-    c.eyeposition[] = (5, surface_height(0, 0) + 3, 5)
-    c.lookat[] = Vec3f(6, surface_height(0, 0) + 3, 6)
+    c.eyeposition[] = (x, y, z)
+    c.lookat[] = Vec3f(x+1, y, z+1)
     c.upvector[] = (1, 1, 1)
     update_cam!(scene)
 
@@ -135,8 +157,6 @@ function start_game()
         push!(positionsAll[Int(block_state(x, y, z))][], GLMakie.Point3f0(x, y, z))
     end
 
-    positionPlayer = Observable(GLMakie.Point3f0(30.0, 30.0, 30.0))
-    meshscatter!(scene, positionPlayer; markersize=1, marker=return_mesh(BlockType(1)))
 
     for (idx, i) in enumerate(positionsAll)
         marker = return_mesh(BlockType(idx))
@@ -152,6 +172,8 @@ function start_game()
             a = meshscatter!(scene, i; markersize=1, marker=marker, color=tex)
         end
     end
+    positionPlayer = Observable(GLMakie.Point3f0(30.0, 20.0, 30.0))
+    meshscatter!(scene, positionPlayer; markersize=1, marker=return_mesh(BlockType(18)), color=tex)
 
     # for block adding and breaking
     on(events(scene).mousebutton) do button
@@ -190,6 +212,7 @@ function start_game()
 
             locMouse[] = string("Mouse CLoc: ", round.(Int, p.positions[][idx]))
             loc = p.positions[][idx]
+            @show block_state(round(Int, loc[1]), round(Int, loc[2]), round(Int, loc[3]))
             if (block_state(round(Int, loc[1]), round(Int, loc[2]), round(Int, loc[3])) != bedrock)
                 if (p.positions[][idx] in world_changelocs)
 
@@ -298,7 +321,16 @@ function start_game()
         end
 
         send(server, ip_address, port, string(key, ":ClientBye:", player_name))
+        #@show cam_controls.eyeposition[] msg = join(map(x -> stringify(x), cam_controls.eyeposition[]), ",")
+        loc = cam_controls.eyeposition[]
+        # Update loc data
+        new_loc = [loc[1], loc[2], loc[3]]  # Example new loc data
+        config["loc"] = new_loc
 
+        # Write updated config back to file
+        JSON.open("config.json", "w") do file
+            JSON.print(file, config)
+        end
         close(screen)
     end
     Base.errormonitor(task)

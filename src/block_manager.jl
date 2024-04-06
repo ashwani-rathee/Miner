@@ -130,6 +130,22 @@ function return_mesh(block::BlockType)
         # top face
         mesh.uv[21:24] = map(x -> (x ./ ntex) .+ Vec2f(13/16, (0 / ntex)), Vec2f[(1, 1), (1, 0), (0, 0), (0, 1)])
         return mesh
+    elseif (block == BlockType(18))
+        @show "Aaa"
+        mesh = uv_normal_mesh(Rect3f(Vec{3}(0, 0, 0), Vec{3}(1, 2, 1)))
+        # side face
+        mesh.uv[1:4] = map(x -> (x ./ ntex) .+ Vec2f(1/16, (14 / ntex)), Vec2f[ (1, 0), (0, 0), (0, 1), (1, 1)])
+        # bottom face
+        mesh.uv[5:8] = map(x-> (x ./ ntex) .+ Vec2f(1/16, (13 / ntex)), Vec2f[(1, 0), (0, 0), (0, 1), (1, 1)])
+        # side face
+        mesh.uv[9:12] = map(x-> (x ./ ntex) .+ Vec2f(2/16, (14 / ntex)), Vec2f[  (0, 0), (0, 1), (1, 1), (1, 0)])
+        # side face :correct
+        mesh.uv[13:16] = map(x -> (x ./ ntex) .+ Vec2f(3/16, (14 / ntex)), Vec2f[(0, 1), (1, 1), (1, 0), (0, 0)])
+        # side face
+        mesh.uv[17:20] = map(x -> (x ./ ntex) .+ Vec2f(0/16, (14 / ntex)), Vec2f[(1, 1), (1, 0), (0, 0), (0, 1)])
+        # top face
+        mesh.uv[21:24] = map(x -> (x ./ ntex) .+ Vec2f(1/16, (15 / ntex)), Vec2f[(1, 1), (1, 0), (0, 0), (0, 1)])
+        return mesh
     
     elseif (Int(block) in collect(10:16))
         mesh = uv_normal_mesh(Rect3f(Vec3f(0), Vec3f(1)))
